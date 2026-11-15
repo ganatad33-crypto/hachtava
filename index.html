@@ -255,20 +255,31 @@ function loadVoices(){if(!("speechSynthesis" in window))return;const v=speechSyn
   heVoice=he.find(x=>/natural|online|neural|google|enhanced|premium/i.test(x.name))||he[0]||null;
   const w=$("voiceWarn");if(v.length&&!heVoice){w.hidden=false;w.textContent="לא נמצא קול עברי בדפדפן הזה. כדאי לפתוח ב-Microsoft Edge. בינתיים, הורה יכול להקריא את המילים בקול.";}else w.hidden=true;}
 if("speechSynthesis" in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;}
-let sayTimer=0;
-function mkU(t,rate){const u=new SpeechSynthesisUtterance(t);u.lang="he-IL";if(heVoice)u.voice=heVoice;u.rate=Math.max(.3,(rate||.75)*.78);u.pitch=1;u.volume=1;return u;}
+let sayTimer=0,wdTimer=0,goTimer=0;const keepU=[];
+function mkU(t,rate,plain){const u=new SpeechSynthesisUtterance(t);u.lang="he-IL";if(heVoice&&!plain)u.voice=heVoice;u.rate=Math.max(.3,(rate||.75)*.78);u.pitch=1;u.volume=1;return u;}
+function stopSpeech(){clearTimeout(sayTimer);clearTimeout(wdTimer);clearTimeout(goTimer);if("speechSynthesis" in window)speechSynthesis.cancel();}
+// robust speaking: pause a beat after cancel (some phones drop speech otherwise), keep a reference to the
+// utterance, and if the chosen voice never starts, try once more with the device's default Hebrew voice
+function speakU(make,onend){const S=speechSynthesis;clearTimeout(wdTimer);clearTimeout(goTimer);
+  const busy=S.speaking||S.pending;if(busy)S.cancel();try{S.resume();}catch(e){}
+  const go=plain=>{const u=make(plain);let started=false,finished=false;keepU.push(u);if(keepU.length>6)keepU.shift();
+    const fin=()=>{if(finished)return;finished=true;clearTimeout(wdTimer);if(onend)onend();};
+    u.onstart=()=>{started=true;clearTimeout(wdTimer);};u.onend=fin;
+    u.onerror=e=>{if(finished||e.error==="interrupted"||e.error==="canceled")return;clearTimeout(wdTimer);if(!plain&&!started){finished=true;go(true);}else fin();};
+    try{S.speak(u);}catch(e){}
+    if(!plain)wdTimer=setTimeout(()=>{if(started||finished||S.speaking)return;finished=true;S.cancel();goTimer=setTimeout(()=>go(true),150);},2500);};
+  goTimer=setTimeout(()=>go(false),busy?150:0);}
 // clear and slow; "twice" repeats the word after a short pause
-function say(t,rate,twice){if(!("speechSynthesis" in window))return;clearTimeout(sayTimer);speechSynthesis.cancel();
-  const u=mkU(t,rate);if(twice)u.onend=()=>{sayTimer=setTimeout(()=>speechSynthesis.speak(mkU(t,(rate||.75)*.85)),650);};
-  speechSynthesis.speak(u);}
+function say(t,rate,twice){if(!("speechSynthesis" in window))return;clearTimeout(sayTimer);
+  speakU(p=>mkU(t,rate,p),twice?()=>{sayTimer=setTimeout(()=>speakU(p=>mkU(t,(rate||.75)*.85,p)),650);}:null);}
 // phones only allow sound and speech after a tap, so wake both up on the start button
 function unlock(){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();ac.resume();}catch(e){}
   try{const u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u);}catch(e){}}
 // sounds
 let ac=null;
-function tone(fs,d,type){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();fs.forEach((f,k)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=type||"triangle";o.frequency.value=f;
+function tone(fs,d,type){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();if(ac.state==="suspended")ac.resume();fs.forEach((f,k)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=type||"triangle";o.frequency.value=f;
   const t=ac.currentTime+k*d;g.gain.setValueAtTime(.16,t);g.gain.exponentialRampToValueAtTime(.001,t+d*1.6);o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+d*1.7);});}catch(e){}}
-function boing(up){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime;o.type="sine";
+function boing(up){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();if(ac.state==="suspended")ac.resume();const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime;o.type="sine";
   o.frequency.setValueAtTime(up?300:500,t);o.frequency.exponentialRampToValueAtTime(up?750:160,t+.18);g.gain.setValueAtTime(.18,t);g.gain.exponentialRampToValueAtTime(.001,t+.25);
   o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+.26);}catch(e){}}
 
@@ -368,10 +379,9 @@ function playIntro(cb){
   const o=document.createElement("div");o.className="intro";
   o.innerHTML="<p>🕶️ "+STORY+'</p><button class="primary" type="button">דלג ⏭</button>';st.appendChild(o);
   let done=false,timer=0;
-  const end=()=>{if(done)return;done=true;clearTimeout(timer);if("speechSynthesis" in window)speechSynthesis.cancel();o.remove();cb();};
+  const end=()=>{if(done)return;done=true;clearTimeout(timer);stopSpeech();o.remove();cb();};
   o.querySelector("button").onclick=e=>{e.stopPropagation();end();};
-  if("speechSynthesis" in window){speechSynthesis.cancel();const u=mkU(STORY,1.1);u.onend=()=>setTimeout(end,400);u.onerror=()=>setTimeout(end,2500);
-    speechSynthesis.speak(u);timer=setTimeout(end,30000);}
+  if("speechSynthesis" in window){speakU(p=>mkU(STORY,1.1,p),()=>setTimeout(end,400));timer=setTimeout(end,30000);}
   else timer=setTimeout(end,6000);
 }
 function nextWord(){
@@ -515,7 +525,7 @@ if(TOUCH)document.body.classList.add("touch");
     f.style.setProperty("--fx",(Math.random()*80-40)+"px");f.style.setProperty("--fy",(Math.random()*-70-10)+"px");
     f.style.animationDuration=(4+Math.random()*5)+"s";f.style.animationDelay=(-Math.random()*5)+"s";st.appendChild(f);}})();
 $("testVoice").onclick=()=>{const w=parseWords($("words").value)[0];say(w?w.say:"שלום");};
-$("toSetup").onclick=()=>{if("speechSynthesis" in window)speechSynthesis.cancel();show("setup");};
+$("toSetup").onclick=()=>{stopSpeech();show("setup");};
 $("hear").onclick=()=>{if(!cur)return;say(cur.say,.75,true);focusKb();};
 $("slow").onclick=()=>{if(!cur)return;say(cur.say,.5);focusKb();};
 $("hint").onclick=()=>{if(busy||!cur)return;ghost();points=Math.max(0,points-5);upd();msg("💡 האות הבאה מופיעה על המדרגה");focusKb();};
